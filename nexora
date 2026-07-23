@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# Nexora helper command. Installed to /usr/local/bin/nexora by install.sh.
+set -uo pipefail
+
+DIR="/root/nexora-executor"
+ENV_FILE="${DIR}/.env"
+UNIT="nexora-executor"
+HB="/tmp/nexora_executor_alive"
+LOG="${DIR}/logs/executor.log"
+HELPER_URL="https://raw.githubusercontent.com/Cryptobona/nexora-install/main/nexora"
+
+C_G=$'\033[32m'; C_R=$'\033[31m'; C_Y=$'\033[33m'; C_B=$'\033[1m'; C_0=$'\033[0m'
+ok()   { printf '  %s✓%s %s\n' "$C_G" "$C_0" "$1"; }
+bad()  { printf '  %s✗%s %s\n' "$C_R" "$C_0" "$1"; }
+warn() { printf '  %s!%s %s\n' "$C_Y" "$C_0" "$1"; }
+
+[ "$(id -u)" -eq 0 ] || { echo "Please run: sudo nexora $*"; exit 1; }
+[ -f "$ENV_FILE" ] || { echo "Nexora is not installed on this server."; exit 1; }
+
+get_env() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-; }
+db_path() { local p; p="$(get_env EXECUTOR_DB_PATH)"; echo "${p:-${DIR}/data/executor_state.db}"; }
+
+cmd_status() {
+  local mode active hbage db
+  mode="$(get_env EXECUTOR_MODE)"; mode="${mode:-unknown}"
+  printf '\n%s  NEXORA STATUS%s\n\n' "$C_B" "$C_0"
+
+  if systemctl is-active --quiet "$UNIT"; then ok "Service: running"; active=1
+  else bad "Service: STOPPED  (start it with: nexora resume)"; active=0; fi
+
+  if [ "$mode" = "live" ]; then ok "Mode: LIVE — real money"
+  else ok "Mode: PAPER — no real trades"; fi
+
+  if [ -f "$HB" ]; then
+    hbage=$(( $(date +%s) - $(stat -c %Y "$HB") ))
+    if [ "$hbage" -lt 120 ]; then ok "Heartbeat: ${hbage}s ago"
+    else bad "Heartbeat: ${hbage}s ago — stale, the executor may be stuck"; fi
+  else
+    [ "$active" -eq 1 ] && warn "Heartbeat: no file yet (just started?)"
+  fi
+
+  db="$(db_path)"
+  if [ -f "$db" ]; then
+    printf '\n  Open trades:\n'
+    sqlite3 -header -column "$db" \
+      "SELECT trade_id, direction, entry_price, sl_price, status
+         FROM trades WHERE status='open' ORDER BY rowid DESC LIMIT 5;" 2>/dev/null \
+      | sed 's/^/    /' || printf '    (could not read the trade database)\n'
+    printf '\n  Last 5 closed:\n'
+    sqlite3 -header -column "$db" \
+      "SELECT datetime(closed_at,'unixepoch') closed, direction, exit_reason, realized_pnl
+         FROM trades WHERE status='closed' ORDER BY rowid DESC LIMIT 5;" 2>/dev/null \
+      | sed 's/^/    /' || true
+  fi
+
+  printf '\n  Recent activity:\n'
+  if [ -s "$LOG" ]; then tail -n 3 "$LOG" | sed 's/^/    /'
+  else printf '    (no log output yet)\n'; fi
+  printf '\n'
+}
+
+cmd_live() {
+  local mode
+  mode="$(get_env EXECUTOR_MODE)"
+  if [ "$mode" = "live" ]; then ok "Already in LIVE mode."; exit 0; fi
+
+  cat <<'EOM'
+
+  ────────────────────────────────────────────────────────────────
+  BEFORE YOU SWITCH TO LIVE TRADING — PLEASE READ
+
+  From this point Nexora places real orders with real money in your
+  own Bitunix account, automatically, without asking you first.
+
+  Trading leveraged Bitcoin perpetual futures is high risk. Losses
+  can be rapid and can exceed what you expect. Past performance,
+  paper results and backtests do not predict future results. You
+  can lose your entire deposit.
+
+  Nexora is software. It is not investment advice, not a managed
+  fund, and not a guarantee of profit. Nexora never holds, moves or
+  withdraws your funds — the account, the API key and every position
+  belong to you, and you can stop the software at any time with
+  'nexora pause' or close positions yourself in Bitunix.
+
+  Only trade money you can afford to lose entirely.
+  ────────────────────────────────────────────────────────────────
+
+EOM
+  read -r -p "  Type YES (capitals) to start live trading: " CONF </dev/tty
+  [ "${CONF:-}" = "YES" ] || { echo "  Not confirmed. Staying in paper mode."; exit 1; }
+
+  cp "$ENV_FILE" "${ENV_FILE}.bak"
+  if grep -qE '^EXECUTOR_MODE=' "$ENV_FILE"; then
+    sed -i 's/^EXECUTOR_MODE=.*/EXECUTOR_MODE=live/' "$ENV_FILE"
+  else
+    echo 'EXECUTOR_MODE=live' >> "$ENV_FILE"
+  fi
+  chmod 600 "$ENV_FILE"
+  systemctl restart "$UNIT"; sleep 8
+  if systemctl is-active --quiet "$UNIT" && [ "$(get_env EXECUTOR_MODE)" = "live" ]; then
+    ok "LIVE. Nexora will now trade your account. 'nexora pause' stops it."
+  else
+    bad "Something went wrong starting live mode. Run 'nexora support'."
+    exit 1
+  fi
+}
+
+cmd_paper() {
+  cp "$ENV_FILE" "${ENV_FILE}.bak"
+  sed -i 's/^EXECUTOR_MODE=.*/EXECUTOR_MODE=paper/' "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+  systemctl restart "$UNIT"; sleep 5
+  ok "Back in PAPER mode. No new real trades will be opened."
+  warn "Any position already open stays open on Bitunix with its stop and target."
+}
+
+cmd_pause() {
+  systemctl stop "$UNIT"
+  ok "Nexora stopped. It will not open new trades."
+  warn "Any open position keeps its stop-loss and take-profit on Bitunix."
+  warn "Your account, your button — close it yourself in Bitunix if you want out."
+}
+
+cmd_resume() { systemctl start "$UNIT"; sleep 5
+  if systemctl is-active --quiet "$UNIT"; then ok "Nexora is running again."; else bad "Failed to start. Run 'nexora support'."; fi; }
+
+cmd_update() {
+  if [ -x "${DIR}/scripts/update.sh" ]; then
+    "${DIR}/scripts/update.sh"
+  else
+    ( cd "$DIR" && git pull --ff-only ) && systemctl restart "$UNIT" && ok "Updated."
+  fi
+  curl -sSL "$HELPER_URL" -o /usr/local/bin/nexora 2>/dev/null && chmod 755 /usr/local/bin/nexora || true
+}
+
+cmd_logs() {
+  echo "  Showing live activity. Press Ctrl+C to stop (this does NOT stop trading)."
+  tail -n 20 -f "$LOG"
+}
+
+cmd_support() {
+  printf '===== NEXORA SUPPORT REPORT =====\n'
+  printf 'date:    %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+  printf 'version: %s\n' "$(cd "$DIR" && git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  printf 'mode:    %s\n' "$(get_env EXECUTOR_MODE)"
+  printf 'service: %s\n' "$(systemctl is-active "$UNIT" 2>/dev/null)"
+  printf 'ip:      %s\n' "$(curl -s --max-time 5 https://ifconfig.me 2>/dev/null)"
+  printf 'heartbeat age: %s s\n' "$([ -f "$HB" ] && echo $(( $(date +%s) - $(stat -c %Y "$HB") )) || echo none)"
+  printf '\n----- last 30 log lines -----\n'
+  tail -n 30 "$LOG" 2>/dev/null || echo '(no log file)'
+  printf '===== END REPORT =====\n'
+}
+
+cmd_uninstall() {
+  read -r -p "  Remove Nexora from this server? Type REMOVE to confirm: " CONF </dev/tty
+  [ "${CONF:-}" = "REMOVE" ] || { echo "  Cancelled."; exit 1; }
+  systemctl disable --now "$UNIT" >/dev/null 2>&1
+  rm -f "/etc/systemd/system/${UNIT}.service"; systemctl daemon-reload
+  rm -rf "$DIR"; rm -f /usr/local/bin/nexora
+  ok "Nexora removed."
+  warn "Your Bitunix account and any open position are untouched."
+  warn "Revoke this server's API key in Bitunix if you no longer need it."
+}
+
+case "${1:-help}" in
+  status)    cmd_status ;;
+  live)      cmd_live ;;
+  paper)     cmd_paper ;;
+  pause)     cmd_pause ;;
+  resume)    cmd_resume ;;
+  update)    cmd_update ;;
+  logs)      cmd_logs ;;
+  support)   cmd_support ;;
+  uninstall) cmd_uninstall ;;
+  *) cat <<'EOM'
+
+  nexora <command>
+
+    status      how things are going right now
+    logs        watch it work live (Ctrl+C to stop watching)
+    live        switch to real trading (asks you to confirm)
+    paper       switch back to practice mode
+    pause       stop trading (open positions keep their stop/target)
+    resume      start trading again
+    update      install the newest Nexora version
+    support     print a report to send to Nexora
+    uninstall   remove Nexora from this server
+
+EOM
+  ;;
+esac
