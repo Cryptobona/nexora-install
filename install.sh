@@ -179,7 +179,17 @@ for i in $(seq 1 $MAX_TRIES); do
   esac
   NHOSTPORT="${NATS_URL##*@}"; NHOST="${NHOSTPORT%%:*}"; NPORT="${NHOSTPORT##*:}"
   [ "$NPORT" = "$NHOSTPORT" ] && NPORT=4222
-  if timeout 8 bash -c "echo > /dev/tcp/${NHOST}/${NPORT}" 2>/dev/null; then
+  # Retry before accusing the firewall. A single TCP probe fails on any
+  # transient blip, and the message below sends the customer to support for
+  # a connection that actually works. Three attempts, then believe it.
+  NREACH=0
+  for _try in 1 2 3; do
+    if timeout 8 bash -c "echo > /dev/tcp/${NHOST}/${NPORT}" 2>/dev/null; then
+      NREACH=1; break
+    fi
+    [ "$_try" -lt 3 ] && sleep 3
+  done
+  if [ "$NREACH" -eq 1 ]; then
     ok "Signal server reachable"
     break
   fi
