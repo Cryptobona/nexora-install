@@ -18,6 +18,7 @@ warn() { printf '  %s!%s %s\n' "$C_Y" "$C_0" "$1"; }
 [ -f "$ENV_FILE" ] || { echo "Nexora is not installed on this server."; exit 1; }
 
 get_env() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-; }
+backup_env() { cp -a "$ENV_FILE" "${ENV_FILE}.bak.$(date -u +%Y%m%d-%H%M%S)"; }
 db_path() { local p; p="$(get_env EXECUTOR_DB_PATH)"; echo "${p:-${DIR}/data/executor_state.db}"; }
 
 cmd_status() {
@@ -29,7 +30,8 @@ cmd_status() {
   else bad "Service: STOPPED  (start it with: nexora resume)"; active=0; fi
 
   if [ "$mode" = "live" ]; then ok "Mode: LIVE — real money"
-  else ok "Mode: PAPER — no real trades"; fi
+  elif [ "$mode" = "paper" ]; then ok "Mode: PAPER — no real trades"
+  else warn "Mode: not set in .env — Nexora defaults to PAPER. Run 'nexora paper' to make it explicit."; fi
 
   if [ -f "$HB" ]; then
     hbage=$(( $(date +%s) - $(stat -c %Y "$HB") ))
@@ -90,7 +92,7 @@ EOM
   read -r -p "  Type YES (capitals) to start live trading: " CONF </dev/tty
   [ "${CONF:-}" = "YES" ] || { echo "  Not confirmed. Staying in paper mode."; exit 1; }
 
-  cp "$ENV_FILE" "${ENV_FILE}.bak"
+  backup_env
   if grep -qE '^EXECUTOR_MODE=' "$ENV_FILE"; then
     sed -i 's/^EXECUTOR_MODE=.*/EXECUTOR_MODE=live/' "$ENV_FILE"
   else
@@ -107,10 +109,22 @@ EOM
 }
 
 cmd_paper() {
-  cp "$ENV_FILE" "${ENV_FILE}.bak"
-  sed -i 's/^EXECUTOR_MODE=.*/EXECUTOR_MODE=paper/' "$ENV_FILE"
+  backup_env
+  if grep -qE '^EXECUTOR_MODE=' "$ENV_FILE"; then
+    sed -i 's/^EXECUTOR_MODE=.*/EXECUTOR_MODE=paper/' "$ENV_FILE"
+  else
+    echo 'EXECUTOR_MODE=paper' >> "$ENV_FILE"
+  fi
   chmod 600 "$ENV_FILE"
-  systemctl restart "$UNIT"; sleep 5
+  systemctl restart "$UNIT"; sleep 8
+  if [ "$(get_env EXECUTOR_MODE)" != "paper" ]; then
+    bad "Could not switch to paper. STILL LIVE. Run 'nexora pause' now, then 'nexora support'."
+    exit 1
+  fi
+  if ! systemctl is-active --quiet "$UNIT"; then
+    bad "Set to paper, but the service did not come back up. Run 'nexora support'."
+    exit 1
+  fi
   ok "Back in PAPER mode. No new real trades will be opened."
   warn "Any position already open stays open on Bitunix with its stop and target."
 }
