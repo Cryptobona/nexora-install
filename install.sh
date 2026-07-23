@@ -21,6 +21,22 @@ warn() { printf '  %s!%s %s\n' "$C_Y" "$C_0" "$1"; }
 bad()  { printf '  %s✗%s %s\n' "$C_R" "$C_0" "$1"; }
 die()  { printf '\n%s✗ %s%s\n\n' "$C_R" "$1" "$C_0"; exit 1; }
 
+# Secrets are read hidden and only ever shown masked. Nothing typed at a prompt
+# reaches the screen, so terminal output can be copied to support without
+# leaking a key. (Three real credential leaks in this project came from echo.)
+mask() {
+  local v="${1:-}" n=${#1}
+  if   [ "$n" -eq 0 ]; then printf '(nothing entered)'
+  elif [ "$n" -le 8 ]; then printf '**** (%d characters)' "$n"
+  else printf '%s...%s (%d characters)' "${v:0:4}" "${v: -4}" "$n"; fi
+}
+redact_url() {
+  case "${1:-}" in
+    *@*) printf 'nats://***@%s' "${1##*@}" ;;
+    *)   printf '%s' "${1:-}" ;;
+  esac
+}
+
 # -4 is required: dual-stack servers answer with IPv6, but the NATS firewall
 # rule and the Bitunix IP restriction both need the IPv4 address.
 MY_IP="$(curl -4 -s --max-time 8 https://ifconfig.me 2>/dev/null || echo 'unknown')"
@@ -115,8 +131,10 @@ printf '  Six short questions. Paste each value and press Enter.\n'
 # 1. license key
 LICENSE=""
 for i in $(seq 1 $MAX_TRIES); do
-  read -r -p $'\n  Paste your Nexora license key: ' LICENSE </dev/tty
+  printf '\n  Paste your Nexora license key (hidden as you paste): '
+  read -rs LICENSE </dev/tty; printf '\n'
   LICENSE="$(echo "$LICENSE" | tr -d '[:space:]')"
+  printf '    got: %s\n' "$(mask "$LICENSE")"
   [ -n "$LICENSE" ] || { bad "Nothing entered."; continue; }
   if git ls-remote "https://x-access-token:${LICENSE}@github.com/${REPO_PATH}.git" HEAD >/dev/null 2>&1; then
     ok "License key accepted"
@@ -129,8 +147,10 @@ done
 # 2. NATS signal address
 NATS_URL=""
 for i in $(seq 1 $MAX_TRIES); do
-  read -r -p $'\n  Paste your Nexora signal address (starts with nats://): ' NATS_URL </dev/tty
+  printf '\n  Paste your Nexora signal address, starts with nats:// (hidden): '
+  read -rs NATS_URL </dev/tty; printf '\n'
   NATS_URL="$(echo "$NATS_URL" | tr -d '[:space:]')"
+  printf '    got: %s\n' "$(redact_url "$NATS_URL")"
   case "$NATS_URL" in
     nats://*) : ;;
     *) bad "That does not look like a signal address. It must start with nats://"; continue ;;
@@ -148,16 +168,22 @@ for i in $(seq 1 $MAX_TRIES); do
 done
 
 # 3 + 4. Bitunix keys (validated after clone)
-read -r -p $'\n  Paste your Bitunix API key: ' BITUNIX_KEY </dev/tty
+printf '\n  Paste your Bitunix API key (hidden): '
+read -rs BITUNIX_KEY </dev/tty; printf '\n'
 BITUNIX_KEY="$(echo "$BITUNIX_KEY" | tr -d '[:space:]')"
-read -r -p '  Paste your Bitunix API secret: ' BITUNIX_SECRET </dev/tty
+printf '    got: %s\n' "$(mask "$BITUNIX_KEY")"
+printf '  Paste your Bitunix API secret (hidden): '
+read -rs BITUNIX_SECRET </dev/tty; printf '\n'
 BITUNIX_SECRET="$(echo "$BITUNIX_SECRET" | tr -d '[:space:]')"
+printf '    got: %s\n' "$(mask "$BITUNIX_SECRET")"
 [ -n "$BITUNIX_KEY" ] && [ -n "$BITUNIX_SECRET" ] || die "Both the Bitunix API key and secret are required."
 
 # 5 + 6. Telegram (optional)
 printf '\n  Telegram alerts let you see every trade on your phone. Strongly recommended.\n'
-read -r -p '  Telegram bot token (press Enter to skip): ' TG_TOKEN </dev/tty
+printf '  Telegram bot token, press Enter to skip (hidden): '
+read -rs TG_TOKEN </dev/tty; printf '\n'
 TG_TOKEN="$(echo "${TG_TOKEN:-}" | tr -d '[:space:]')"
+[ -n "$TG_TOKEN" ] && printf '    got: %s\n' "$(mask "$TG_TOKEN")"
 TG_CHAT=""
 if [ -n "$TG_TOKEN" ]; then
   read -r -p '  Telegram chat id: ' TG_CHAT </dev/tty
