@@ -350,8 +350,11 @@ systemctl enable --now "$UNIT_NAME" >/dev/null 2>&1
 sleep 10
 
 RUN_OK=0
+ACCT_OK=1
+NEW_LOG=""
 if systemctl is-active --quiet "$UNIT_NAME"; then
-  if tail -n "+$((LOG_OFFSET + 1))" "$LOG_FILE" 2>/dev/null | grep -q "Executor ready"; then
+  NEW_LOG="$(tail -n "+$((LOG_OFFSET + 1))" "$LOG_FILE" 2>/dev/null || true)"
+  if printf '%s\n' "$NEW_LOG" | grep -q "Executor ready"; then
     RUN_OK=1; ok "Executor running (version ${VERSION})"
   else
     RUN_OK=1; warn "Executor started but has not reported ready yet — check 'nexora status' in a minute"
@@ -359,6 +362,27 @@ if systemctl is-active --quiet "$UNIT_NAME"; then
 else
   bad "Executor did not start"
   tail -n 5 "$LOG_FILE" 2>/dev/null | sed 's/^/     /'
+fi
+
+# The executor verifies the Bitunix account settings itself at boot. Surface
+# that here: ONE_WAY is not optional — the executor is written for it, and a
+# HEDGE account (Bitunix's default) would mismanage real positions.
+POS_LINE="$(printf '%s\n' "$NEW_LOG" | grep -m1 'POSITION MODE MISMATCH' | sed 's/.*MISMATCH | *//')"
+LEV_LINE="$(printf '%s\n' "$NEW_LOG" | grep -m1 'LEVERAGE MISMATCH'      | sed 's/.*MISMATCH | *//')"
+if [ -n "$POS_LINE" ] || [ -n "$LEV_LINE" ]; then
+  ACCT_OK=0
+  bad "Your Bitunix account settings need changing"
+  if [ -n "$POS_LINE" ]; then
+    printf '     %s\n' "$POS_LINE"
+    printf '     Fix in Bitunix: Futures screen > settings > Position Mode > One-way\n'
+  fi
+  if [ -n "$LEV_LINE" ]; then
+    printf '     %s\n' "$LEV_LINE"
+    printf '     Fix in Bitunix: open BTCUSDT > leverage button > 50x, margin mode Cross\n'
+  fi
+  printf '     Change both, then run this installer again and choose [R].\n'
+else
+  ok "Bitunix account settings verified (ONE_WAY, 50x CROSS)"
 fi
 
 curl -sSL "$HELPER_URL" -o /usr/local/bin/nexora 2>/dev/null && chmod 755 /usr/local/bin/nexora \
@@ -377,6 +401,8 @@ if [ "$NATS_OK" -eq 1 ]; then ok "Nexora signal feed connected (authenticated)"
 else bad "Signal feed NOT connected"; FAILED=1; fi
 if [ "$TG_OK" -eq 1 ]; then ok "Telegram alerts working"
 else warn "Telegram alerts not set up"; fi
+if [ "$ACCT_OK" -eq 1 ]; then ok "Bitunix account settings correct (ONE_WAY, 50x CROSS)"
+else bad "Bitunix account settings MUST be changed (see above)"; FAILED=1; fi
 if [ "$RUN_OK" -eq 1 ]; then ok "Running in PAPER mode — no real trades yet"
 else bad "Executor NOT running"; FAILED=1; fi
 printf '%s──────────────────────────────────────────────────────────%s\n' "$C_B" "$C_0"
