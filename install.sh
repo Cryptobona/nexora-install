@@ -367,23 +367,34 @@ fi
 # The executor verifies the Bitunix account settings itself at boot. Surface
 # that here: ONE_WAY is not optional — the executor is written for it, and a
 # HEDGE account (Bitunix's default) would mismanage real positions.
+#
+# THREE states, never two. If the executor never reached Bitunix it emits no
+# mismatch warning, and treating that silence as "verified" would report a
+# health this install does not have. Absence of a warning is not a pass.
+ACCT_STATE="unknown"
 POS_LINE="$(printf '%s\n' "$NEW_LOG" | grep -m1 'POSITION MODE MISMATCH' | sed 's/.*MISMATCH | *//')"
 LEV_LINE="$(printf '%s\n' "$NEW_LOG" | grep -m1 'LEVERAGE MISMATCH'      | sed 's/.*MISMATCH | *//')"
-if [ -n "$POS_LINE" ] || [ -n "$LEV_LINE" ]; then
-  ACCT_OK=0
-  bad "Your Bitunix account settings need changing"
-  if [ -n "$POS_LINE" ]; then
-    printf '     %s\n' "$POS_LINE"
-    printf '     Fix in Bitunix: Futures screen > settings > Position Mode > One-way\n'
-  fi
-  if [ -n "$LEV_LINE" ]; then
-    printf '     %s\n' "$LEV_LINE"
-    printf '     Fix in Bitunix: open BTCUSDT > leverage button > 50x, margin mode Cross\n'
-  fi
-  printf '     Change both, then run this installer again and choose [R].\n'
-else
-  ok "Bitunix account settings verified (ONE_WAY, 50x CROSS)"
+if printf '%s\n' "$NEW_LOG" | grep -q 'Bitunix connected'; then
+  if [ -n "$POS_LINE" ] || [ -n "$LEV_LINE" ]; then ACCT_STATE="bad"; else ACCT_STATE="ok"; fi
 fi
+
+case "$ACCT_STATE" in
+  ok)  ok "Bitunix account settings verified (ONE_WAY, 50x CROSS)" ;;
+  bad)
+    ACCT_OK=0
+    bad "Your Bitunix account settings need changing"
+    if [ -n "$POS_LINE" ]; then
+      printf '     %s\n' "$POS_LINE"
+      printf '     Fix in Bitunix: Futures screen > settings > Position Mode > One-way\n'
+    fi
+    if [ -n "$LEV_LINE" ]; then
+      printf '     %s\n' "$LEV_LINE"
+      printf '     Fix in Bitunix: open BTCUSDT > leverage button > 50x, margin mode Cross\n'
+    fi
+    printf '     Change both, then run this installer again and choose [R].\n'
+    ;;
+  *)   warn "Bitunix account settings NOT checked — the executor could not reach Bitunix" ;;
+esac
 
 curl -sSL "$HELPER_URL" -o /usr/local/bin/nexora 2>/dev/null && chmod 755 /usr/local/bin/nexora \
   && ok "'nexora' command installed" \
@@ -401,8 +412,11 @@ if [ "$NATS_OK" -eq 1 ]; then ok "Nexora signal feed connected (authenticated)"
 else bad "Signal feed NOT connected"; FAILED=1; fi
 if [ "$TG_OK" -eq 1 ]; then ok "Telegram alerts working"
 else warn "Telegram alerts not set up"; fi
-if [ "$ACCT_OK" -eq 1 ]; then ok "Bitunix account settings correct (ONE_WAY, 50x CROSS)"
-else bad "Bitunix account settings MUST be changed (see above)"; FAILED=1; fi
+case "$ACCT_STATE" in
+  ok)  ok "Bitunix account settings correct (ONE_WAY, 50x CROSS)" ;;
+  bad) bad "Bitunix account settings MUST be changed (see above)"; FAILED=1 ;;
+  *)   warn "Bitunix account settings unchecked (fix the Bitunix connection first)" ;;
+esac
 if [ "$RUN_OK" -eq 1 ]; then ok "Running in PAPER mode — no real trades yet"
 else bad "Executor NOT running"; FAILED=1; fi
 printf '%s──────────────────────────────────────────────────────────%s\n' "$C_B" "$C_0"
