@@ -65,6 +65,28 @@ fi
 
 ok "Server IP: ${MY_IP}"
 
+# HARD STOP: this installer is for CUSTOMER servers only. Running it on Nexora
+# infrastructure reconfigures the live executor (.env overwrite, git remote
+# repoint, a second systemd executor beside the tmux one). Learned the hard way,
+# 23 Jul 2026.
+NEXORA_HOST=0
+NEXORA_WHY=""
+[ -d /root/nexora-signal-engine ] && { NEXORA_HOST=1; NEXORA_WHY="the signal engine is installed here"; }
+case "$(hostname)" in
+  nexora-signal-*|nexora-control-*|nexora-monitor-*)
+    NEXORA_HOST=1; NEXORA_WHY="the hostname is Nexora infrastructure" ;;
+esac
+if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx nats; then
+  NEXORA_HOST=1; NEXORA_WHY="the NATS broker runs here"
+fi
+if [ "$NEXORA_HOST" -eq 1 ]; then
+  printf '\n%s✗ This is a Nexora server, not a customer server (%s).%s\n' "$C_R" "$NEXORA_WHY" "$C_0"
+  printf '  Running the installer here would reconfigure the live executor.\n'
+  printf '  Run it on the customer VPS instead.\n\n'
+  printf '  hostname: %s   ip: %s\n\n' "$(hostname)" "$MY_IP"
+  exit 1
+fi
+
 MODE_INSTALL="fresh"
 if [ -f "${INSTALL_DIR}/.env" ]; then
   printf '\n  Nexora is already installed on this server.\n'
@@ -217,6 +239,10 @@ ok "Dependencies installed"
 mkdir -p "${INSTALL_DIR}/data" "${INSTALL_DIR}/logs"
 
 ENV_FILE="${INSTALL_DIR}/.env"
+# Never destroy an existing config without a copy — a reconfigure that goes
+# wrong must be recoverable.
+[ -f "$ENV_FILE" ] && cp -a "$ENV_FILE" "${ENV_FILE}.bak.$(date -u +%Y%m%d-%H%M%S)" \
+  && ok "Previous settings backed up"
 LOG_FILE="${INSTALL_DIR}/logs/executor.log"
 umask 077
 # Only vars WITHOUT a safe code default are written here. BITUNIX_BASE_URL,
