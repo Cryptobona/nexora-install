@@ -35,7 +35,11 @@ cmd_status() {
 
   if [ -f "$HB" ]; then
     hbage=$(( $(date +%s) - $(stat -c %Y "$HB") ))
-    if [ "$hbage" -lt 120 ]; then ok "Heartbeat: ${hbage}s ago"
+    if [ "$active" -eq 0 ]; then
+      # A dead process leaves a fresh heartbeat file for up to 2 minutes.
+      # Freshness is only evidence of health while the service is actually up.
+      bad "Heartbeat: ${hbage}s old, but the service is STOPPED — this is the last beat before it died, not a sign of life"
+    elif [ "$hbage" -lt 120 ]; then ok "Heartbeat: ${hbage}s ago"
     else bad "Heartbeat: ${hbage}s ago — stale, the executor may be stuck"; fi
   else
     [ "$active" -eq 1 ] && warn "Heartbeat: no file yet (just started?)"
@@ -103,7 +107,13 @@ EOM
   if systemctl is-active --quiet "$UNIT" && [ "$(get_env EXECUTOR_MODE)" = "live" ]; then
     ok "LIVE. Nexora will now trade your account. 'nexora pause' stops it."
   else
-    bad "Something went wrong starting live mode. Run 'nexora support'."
+    # Fail closed. Leaving live in .env means a watchdog, a reboot or
+    # 'nexora resume' could bring it up live without passing this gate again.
+    sed -i 's/^EXECUTOR_MODE=.*/EXECUTOR_MODE=paper/' "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    systemctl stop "$UNIT" >/dev/null 2>&1 || true
+    bad "Could not start live mode — reverted to PAPER and stopped Nexora."
+    bad "Nothing is trading. Run 'nexora support' and send us the output."
     exit 1
   fi
 }

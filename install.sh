@@ -199,6 +199,9 @@ read -rs BITUNIX_SECRET </dev/tty; printf '\n'
 BITUNIX_SECRET="$(echo "$BITUNIX_SECRET" | tr -d '[:space:]')"
 printf '    got: %s\n' "$(mask "$BITUNIX_SECRET")"
 [ -n "$BITUNIX_KEY" ] && [ -n "$BITUNIX_SECRET" ] || die "Both the Bitunix API key and secret are required."
+# Both are 32 chars on Bitunix, so the character count cannot catch the same
+# clipboard value pasted twice. Only an equality check can.
+[ "$BITUNIX_KEY" != "$BITUNIX_SECRET" ] || die "The API key and the API secret are the same value. You have pasted the same thing twice. Copy them separately from Bitunix and run this again."
 
 # 5 + 6. Telegram (optional)
 printf '\n  Telegram alerts let you see every trade on your phone. Strongly recommended.\n'
@@ -372,8 +375,17 @@ ${LOG_FILE} {
 }
 EOF
 
-systemctl enable --now "$UNIT_NAME" >/dev/null 2>&1
-sleep 10
+if [ "$BITUNIX_OK" -eq 1 ]; then
+  systemctl enable --now "$UNIT_NAME" >/dev/null 2>&1
+  sleep 10
+else
+  # Bitunix rejected these credentials. Starting anyway leaves an enabled unit
+  # crash-looping on Restart=always, and (in paper) a bot that looks healthy for
+  # days and only fails when the customer switches to live.
+  systemctl disable --now "$UNIT_NAME" >/dev/null 2>&1 || true
+  bad "Nexora was NOT started, because Bitunix rejected these credentials."
+  printf "     Nothing is running and nothing will trade. Fix the key, then\n     run this installer again and choose [R].\n"
+fi
 
 RUN_OK=0
 ACCT_OK=1
