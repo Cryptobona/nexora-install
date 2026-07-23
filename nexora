@@ -145,7 +145,7 @@ cmd_support() {
   printf 'version: %s\n' "$(cd "$DIR" && git rev-parse --short HEAD 2>/dev/null || echo unknown)"
   printf 'mode:    %s\n' "$(get_env EXECUTOR_MODE)"
   printf 'service: %s\n' "$(systemctl is-active "$UNIT" 2>/dev/null)"
-  printf 'ip:      %s\n' "$(curl -s --max-time 5 https://ifconfig.me 2>/dev/null)"
+  printf 'ip:      %s\n' "$(curl -4 -s --max-time 5 https://ifconfig.me 2>/dev/null)"
   printf 'heartbeat age: %s s\n' "$([ -f "$HB" ] && echo $(( $(date +%s) - $(stat -c %Y "$HB") )) || echo none)"
   printf '\n----- last 30 log lines -----\n'
   tail -n 30 "$LOG" 2>/dev/null || echo '(no log file)'

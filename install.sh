@@ -21,7 +21,9 @@ warn() { printf '  %s!%s %s\n' "$C_Y" "$C_0" "$1"; }
 bad()  { printf '  %s✗%s %s\n' "$C_R" "$C_0" "$1"; }
 die()  { printf '\n%s✗ %s%s\n\n' "$C_R" "$1" "$C_0"; exit 1; }
 
-MY_IP="$(curl -s --max-time 8 https://ifconfig.me 2>/dev/null || echo 'unknown')"
+# -4 is required: dual-stack servers answer with IPv6, but the NATS firewall
+# rule and the Bitunix IP restriction both need the IPv4 address.
+MY_IP="$(curl -4 -s --max-time 8 https://ifconfig.me 2>/dev/null || echo 'unknown')"
 
 # ---------------------------------------------------------------- A. preflight
 step "Checking this server"
