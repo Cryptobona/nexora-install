@@ -376,7 +376,11 @@ ${LOG_FILE} {
 EOF
 
 if [ "$BITUNIX_OK" -eq 1 ]; then
-  systemctl enable --now "$UNIT_NAME" >/dev/null 2>&1
+  # NOT 'enable --now': that is a no-op on an already-running unit, so a
+  # reconfigure would write a new .env and leave the executor running on the
+  # old credentials held in memory. Config changes only land on a restart.
+  systemctl enable "$UNIT_NAME" >/dev/null 2>&1
+  systemctl restart "$UNIT_NAME" >/dev/null 2>&1
   sleep 10
 else
   # Bitunix rejected these credentials. Starting anyway leaves an enabled unit
