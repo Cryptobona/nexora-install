@@ -12,6 +12,10 @@ HELPER_URL="https://raw.githubusercontent.com/Cryptobona/nexora-install/main/nex
 C_G=$'\033[32m'; C_R=$'\033[31m'; C_Y=$'\033[33m'; C_B=$'\033[1m'; C_0=$'\033[0m'
 ok()   { printf '  %s✓%s %s\n' "$C_G" "$C_0" "$1"; }
 bad()  { printf '  %s✗%s %s\n' "$C_R" "$C_0" "$1"; }
+# Drain the terminal buffer before any confirmation prompt. A command typed
+# while this script was busy would otherwise be consumed by read as the answer —
+# which for these two prompts means starting live trading or wiping the install.
+flush_tty() { while read -r -t 0.1 -n 10000 _ </dev/tty 2>/dev/null; do :; done; }
 warn() { printf '  %s!%s %s\n' "$C_Y" "$C_0" "$1"; }
 
 [ "$(id -u)" -eq 0 ] || { echo "Please run: sudo nexora $*"; exit 1; }
@@ -93,6 +97,7 @@ cmd_live() {
   ────────────────────────────────────────────────────────────────
 
 EOM
+  flush_tty
   read -r -p "  Type YES (capitals) to start live trading: " CONF </dev/tty
   [ "${CONF:-}" = "YES" ] || { echo "  Not confirmed. Staying in paper mode."; exit 1; }
 
@@ -177,6 +182,7 @@ cmd_support() {
 }
 
 cmd_uninstall() {
+  flush_tty
   read -r -p "  Remove Nexora from this server? Type REMOVE to confirm: " CONF </dev/tty
   [ "${CONF:-}" = "REMOVE" ] || { echo "  Cancelled."; exit 1; }
   systemctl disable --now "$UNIT" >/dev/null 2>&1
