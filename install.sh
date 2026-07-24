@@ -20,6 +20,18 @@ ok()   { printf '  %s✓%s %s\n' "$C_G" "$C_0" "$1"; }
 warn() { printf '  %s!%s %s\n' "$C_Y" "$C_0" "$1"; }
 bad()  { printf '  %s✗%s %s\n' "$C_R" "$C_0" "$1"; }
 die()  { printf '\n%s✗ %s%s\n\n' "$C_R" "$1" "$C_0"; exit 1; }
+# Drain the terminal buffer. Without this, a command typed while the script was
+# busy is consumed by the next read as if it were an answer. That is exactly how
+# the main box .env was corrupted on 23 Jul 2026: three shell commands landed in
+# NATS_URL, BITUNIX_API_KEY and BITUNIX_API_SECRET in prompt order.
+flush_tty() { while read -r -t 0.1 -n 10000 _ </dev/tty 2>/dev/null; do :; done; }
+# Shape guard: alphanumeric only, sane length. Rejects every corruption seen so
+# far (spaces, slashes, @, shell fragments) without betting on an exact vendor
+# key length that we have only observed twice.
+valid_cred() {
+  case "$1" in *[!A-Za-z0-9]*) return 1 ;; esac
+  [ "${#1}" -ge 28 ] && [ "${#1}" -le 64 ]
+}
 
 # Secrets are read hidden and only ever shown masked. Nothing typed at a prompt
 # reaches the screen, so terminal output can be copied to support without
@@ -154,6 +166,7 @@ printf '  Six short questions. Paste each value and press Enter.\n'
 LICENSE=""
 for i in $(seq 1 $MAX_TRIES); do
   printf '\n  Paste your Nexora license key (hidden as you paste): '
+  flush_tty
   read -rs LICENSE </dev/tty; printf '\n'
   LICENSE="$(echo "$LICENSE" | tr -d '[:space:]')"
   printf '    got: %s\n' "$(mask "$LICENSE")"
@@ -170,6 +183,7 @@ done
 NATS_URL=""
 for i in $(seq 1 $MAX_TRIES); do
   printf '\n  Paste your Nexora signal address, starts with nats:// (hidden): '
+  flush_tty
   read -rs NATS_URL </dev/tty; printf '\n'
   NATS_URL="$(echo "$NATS_URL" | tr -d '[:space:]')"
   printf '    got: %s\n' "$(redact_url "$NATS_URL")"
@@ -200,22 +214,40 @@ for i in $(seq 1 $MAX_TRIES); do
 done
 
 # 3 + 4. Bitunix keys (validated after clone)
-printf '\n  Paste your Bitunix API key (hidden): '
-read -rs BITUNIX_KEY </dev/tty; printf '\n'
-BITUNIX_KEY="$(echo "$BITUNIX_KEY" | tr -d '[:space:]')"
-printf '    got: %s\n' "$(mask "$BITUNIX_KEY")"
-printf '  Paste your Bitunix API secret (hidden): '
-read -rs BITUNIX_SECRET </dev/tty; printf '\n'
-BITUNIX_SECRET="$(echo "$BITUNIX_SECRET" | tr -d '[:space:]')"
-printf '    got: %s\n' "$(mask "$BITUNIX_SECRET")"
-[ -n "$BITUNIX_KEY" ] && [ -n "$BITUNIX_SECRET" ] || die "Both the Bitunix API key and secret are required."
-# Both are 32 chars on Bitunix, so the character count cannot catch the same
+BITUNIX_KEY=""
+for i in $(seq 1 $MAX_TRIES); do
+  printf '\n  Paste your Bitunix API key (hidden): '
+  flush_tty
+  read -rs BITUNIX_KEY </dev/tty; printf '\n'
+  BITUNIX_KEY="$(echo "$BITUNIX_KEY" | tr -d '[:space:]')"
+  printf '    got: %s\n' "$(mask "$BITUNIX_KEY")"
+  [ -n "$BITUNIX_KEY" ] || { bad "Nothing entered."; continue; }
+  valid_cred "$BITUNIX_KEY" && break
+  bad "That does not look like a Bitunix API key (letters and numbers only, 28-64 characters)."
+  [ "$i" -eq "$MAX_TRIES" ] && die "Bitunix API key not accepted after ${MAX_TRIES} tries."
+done
+
+BITUNIX_SECRET=""
+for i in $(seq 1 $MAX_TRIES); do
+  printf '  Paste your Bitunix API secret (hidden): '
+  flush_tty
+  read -rs BITUNIX_SECRET </dev/tty; printf '\n'
+  BITUNIX_SECRET="$(echo "$BITUNIX_SECRET" | tr -d '[:space:]')"
+  printf '    got: %s\n' "$(mask "$BITUNIX_SECRET")"
+  [ -n "$BITUNIX_SECRET" ] || { bad "Nothing entered."; continue; }
+  valid_cred "$BITUNIX_SECRET" && break
+  bad "That does not look like a Bitunix API secret (letters and numbers only, 28-64 characters)."
+  [ "$i" -eq "$MAX_TRIES" ] && die "Bitunix API secret not accepted after ${MAX_TRIES} tries."
+done
+
+# Both are 32 chars on Bitunix, so a length or shape check cannot catch the same
 # clipboard value pasted twice. Only an equality check can.
 [ "$BITUNIX_KEY" != "$BITUNIX_SECRET" ] || die "The API key and the API secret are the same value. You have pasted the same thing twice. Copy them separately from Bitunix and run this again."
 
 # 5 + 6. Telegram (optional)
 printf '\n  Telegram alerts let you see every trade on your phone. Strongly recommended.\n'
 printf '  Telegram bot token, press Enter to skip (hidden): '
+flush_tty
 read -rs TG_TOKEN </dev/tty; printf '\n'
 TG_TOKEN="$(echo "${TG_TOKEN:-}" | tr -d '[:space:]')"
 [ -n "$TG_TOKEN" ] && printf '    got: %s\n' "$(mask "$TG_TOKEN")"
@@ -342,6 +374,12 @@ case "$NATS_MSG" in
   *) bad "Signal credentials rejected — contact Nexora."
      printf '     (network reach already passed, so this is an account issue, not a firewall one)\n' ;;
 esac
+
+# Fail closed. Continuing past a failed credential check leaves a broken .env on
+# disk and an executor that looks installed but can never trade.
+if [ "$BITUNIX_OK" -ne 1 ] || [ "$NATS_OK" -ne 1 ]; then
+  die "Setup stopped because a credential was rejected. Nothing is running. Your previous settings were backed up. Contact Nexora with the message above."
+fi
 
 # ---- Telegram
 TG_OK=0
