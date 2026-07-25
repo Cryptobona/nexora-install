@@ -455,8 +455,9 @@ else
 fi
 
 # The executor verifies the Bitunix account settings itself at boot. Surface
-# that here: ONE_WAY is not optional — the executor is written for it, and a
-# HEDGE account (Bitunix's default) would mismanage real positions.
+# that here: HEDGE is not optional — the executor is written for it. HEDGE is
+# Bitunix's DEFAULT, so a fresh account needs no change; a ONE_WAY account
+# (one switched by hand) would mismanage real positions.
 #
 # THREE states, never two. If the executor never reached Bitunix it emits no
 # mismatch warning, and treating that silence as "verified" would report a
@@ -469,13 +470,14 @@ if printf '%s\n' "$NEW_LOG" | grep -q 'Bitunix connected'; then
 fi
 
 case "$ACCT_STATE" in
-  ok)  ok "Bitunix account settings verified (ONE_WAY, 50x CROSS)" ;;
+  ok)  ok "Bitunix account settings verified (HEDGE, 50x CROSS)" ;;
   bad)
     ACCT_OK=0
     bad "Your Bitunix account settings need changing"
     if [ -n "$POS_LINE" ]; then
       printf '     %s\n' "$POS_LINE"
-      printf '     Fix in Bitunix: Futures screen > settings > Position Mode > One-way\n'
+      printf '     Fix in Bitunix: Futures screen > settings > Position Mode > Hedge\n'
+      printf '     (Hedge is the Bitunix default - only change it if it was switched.)\n'
     fi
     if [ -n "$LEV_LINE" ]; then
       printf '     %s\n' "$LEV_LINE"
@@ -503,8 +505,15 @@ else bad "Signal feed NOT connected"; FAILED=1; fi
 if [ "$TG_OK" -eq 1 ]; then ok "Telegram alerts working"
 else warn "Telegram alerts not set up"; fi
 case "$ACCT_STATE" in
-  ok)  ok "Bitunix account settings correct (ONE_WAY, 50x CROSS)" ;;
-  bad) bad "Bitunix account settings MUST be changed (see above)"; FAILED=1 ;;
+  ok)  ok "Bitunix account settings correct (HEDGE, 50x CROSS)" ;;
+  bad)
+    bad "Bitunix account settings MUST be changed (see above)"
+    FAILED=1
+    # Fail closed. The executor HALTS on a position-mode mismatch, so under
+    # Restart=always it would crash-loop forever. Never leave a service running
+    # that we have proven cannot operate.
+    systemctl disable --now "$UNIT_NAME" >/dev/null 2>&1 || true
+    ;;
   *)   warn "Bitunix account settings unchecked (fix the Bitunix connection first)" ;;
 esac
 if [ "$RUN_OK" -eq 1 ]; then ok "Running in PAPER mode — no real trades yet"
