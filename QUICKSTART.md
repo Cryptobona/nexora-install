@@ -75,22 +75,17 @@ money. You can stop it or close positions yourself at any time.
 Sign up with the link we sent you, complete verification, and deposit the
 amount you intend to trade.
 
-### 3b. Set position mode and leverage — **required**
-
-Bitunix ships with settings Nexora cannot use. You must change two of them.
+### 3b. Set margin mode and leverage — **required**
 
 In the Bitunix **USDT-M Futures / BTCUSDT** trading screen:
 
-1. Find **Position Mode** and set it to **One-way** *(the default is Hedge —
-   Nexora will refuse to start on Hedge)*
-2. Set **Margin Mode** to **Cross**
-3. Set **Leverage** to **50x**
+1. Set **Margin Mode** to **Cross**
+2. Set **Leverage** to **50x**
 
-You cannot change position mode while you have an open position or open
-order on BTCUSDT. Close everything first.
-
-> Almost everyone gets stopped here, because Hedge is the default and it
-> looks fine until the installer rejects it. Do it now and the rest is smooth.
+Leave **Position Mode** on **Hedge**. That is the Bitunix default and it is
+what Nexora expects, so on a new account there is nothing to change. If you
+have previously switched it to One-way, switch it back — you can only change
+it with no open positions or orders on BTCUSDT.
 
 ### 3c. Create an API key
 
@@ -236,7 +231,8 @@ just the version, the mode, and the last few log lines. It's safe to paste.
 
 **A few things worth knowing:**
 
-- **"Executor refuses to start — position mode"** → step 3b. You're on Hedge.
+- **"Executor refuses to start — position mode"** → step 3b. You're on One-way;
+  Nexora needs Hedge, which is the Bitunix default.
 - **"Cannot connect to signal server"** → step 2. We haven't added your IP
   yet, or you've rebuilt the server and the IP changed. Message us the new one.
 - **"Bitunix token invalid"** → the key or secret is wrong, or the API key's
@@ -271,7 +267,7 @@ just the version, the mode, and the last few log lines. It's safe to paste.
 <!-- TODO before first customer:
      1. Hetzner: server creation screen with CX22 + Ubuntu 24.04 selected
      2. Hetzner: the >_ Console button
-     3. Bitunix: Position Mode selector showing One-way  ← the important one
+     3. Bitunix: leverage selector showing 50x and margin mode Cross
      4. Bitunix: API creation, Futures Trading on / Withdrawal off / IP field
      5. BotFather: the /newbot reply with the token blurred
      6. Terminal: the finished green checklist
