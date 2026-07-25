@@ -58,6 +58,13 @@ step "Checking this server"
 
 [ "$(id -u)" -eq 0 ] || die "Please run this with sudo."
 
+# git must NEVER prompt. With a bad license key the HTTPS remote asks for a
+# username on the customer's terminal and hangs forever - it looks like a
+# frozen installer and it is unrecoverable without Ctrl-C. Fail fast instead.
+export GIT_TERMINAL_PROMPT=0
+export GIT_ASKPASS=/bin/true
+export SSH_ASKPASS=/bin/true
+
 if [ -r /etc/os-release ]; then
   . /etc/os-release
   if [ "${ID:-}" = "ubuntu" ]; then
@@ -266,12 +273,12 @@ if [ -d "${INSTALL_DIR}/.git" ]; then
     && git fetch -q origin \
     && BR="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main)" \
     && git reset -q --hard "$BR" ) \
-    || die "Could not refresh the Nexora software. Contact Nexora."
+    || die "Could not refresh the Nexora software. This usually means the license key is wrong or expired. Check it and run this again, or contact Nexora."
   ok "Nexora software refreshed"
 else
   rm -rf "$INSTALL_DIR"
   git clone -q "https://x-access-token:${LICENSE}@github.com/${REPO_PATH}.git" "$INSTALL_DIR" \
-    || die "Could not download the Nexora software. Contact Nexora."
+    || die "Could not download the Nexora software. This usually means the license key is wrong or expired. Check it and run this again, or contact Nexora."
   ok "Nexora software downloaded"
 fi
 VERSION="$(cd "$INSTALL_DIR" && git rev-parse --short HEAD 2>/dev/null || echo unknown)"
