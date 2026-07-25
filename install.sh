@@ -251,18 +251,12 @@ done
 # clipboard value pasted twice. Only an equality check can.
 [ "$BITUNIX_KEY" != "$BITUNIX_SECRET" ] || die "The API key and the API secret are the same value. You have pasted the same thing twice. Copy them separately from Bitunix and run this again."
 
-# 5 + 6. Telegram (optional)
-printf '\n  Telegram alerts let you see every trade on your phone. Strongly recommended.\n'
-printf '  Telegram bot token, press Enter to skip (hidden): '
-flush_tty
-read -rs TG_TOKEN </dev/tty; printf '\n'
-TG_TOKEN="$(echo "${TG_TOKEN:-}" | tr -d '[:space:]')"
-[ -n "$TG_TOKEN" ] && printf '    got: %s\n' "$(mask "$TG_TOKEN")"
+# Telegram is NOT prompted for here. Two prompts for an optional feature is two
+# customer touchpoints we can remove: 'nexora telegram' sets it up afterwards,
+# and unlike this path it tests the credentials BEFORE writing them. If a
+# previous install already configured it, those settings are left alone.
+TG_TOKEN=""
 TG_CHAT=""
-if [ -n "$TG_TOKEN" ]; then
-  read -r -p '  Telegram chat id: ' TG_CHAT </dev/tty
-  TG_CHAT="$(echo "${TG_CHAT:-}" | tr -d '[:space:]')"
-fi
 
 # ----------------------------------------------------------------- D. install
 step "Installing Nexora"
@@ -402,7 +396,11 @@ if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
     bad "Telegram did not accept the token/chat id. Alerts are off; everything else still works."
   fi
 else
-  warn "Telegram alerts skipped. You can add them later — ask Nexora how."
+  if [ -s "$TG_FILE" ]; then
+    TG_OK=1; ok "Telegram alerts already configured (left unchanged)"
+  else
+    warn "Telegram alerts not set up yet — run 'nexora telegram' to turn them on"
+  fi
 fi
 
 # ----------------------------------------------------------------- E. service
@@ -510,7 +508,7 @@ else bad "Bitunix NOT connected"; FAILED=1; fi
 if [ "$NATS_OK" -eq 1 ]; then ok "Nexora signal feed connected (authenticated)"
 else bad "Signal feed NOT connected"; FAILED=1; fi
 if [ "$TG_OK" -eq 1 ]; then ok "Telegram alerts working"
-else warn "Telegram alerts not set up"; fi
+else warn "Telegram alerts off — run 'nexora telegram' to turn them on"; fi
 case "$ACCT_STATE" in
   ok)  ok "Bitunix account settings correct (HEDGE, 50x CROSS)" ;;
   bad)
@@ -530,8 +528,11 @@ printf '%s───────────────────────�
 if [ "$FAILED" -eq 0 ]; then
 cat <<EOM
 
-  NEXT: let it run about 24 hours. You will get [PAPER] Telegram messages
-  when signals fire — that proves everything works, with zero risk.
+  NEXT: let it run about 24 hours in PAPER mode — it will place no real
+  trades, which proves everything works with zero risk.
+
+  Turn on phone alerts first so you can watch it happen:
+    nexora telegram
 
   Useful commands:
     nexora status     how things are going

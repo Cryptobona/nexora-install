@@ -181,6 +181,36 @@ cmd_support() {
   printf '===== END REPORT =====\n'
 }
 
+cmd_telegram() {
+  local token chat resp
+  printf '\n%s  TELEGRAM ALERTS%s\n\n' "$C_B" "$C_0"
+  printf '  You will get a message for every trade.\n\n'
+  printf '  Bot token (hidden, Enter to cancel): '
+  flush_tty
+  read -rs token </dev/tty; printf '\n'
+  token="$(echo "${token:-}" | tr -d '[:space:]')"
+  [ -n "$token" ] || { warn "Cancelled. Nothing changed."; return 1; }
+  printf '  (%s chars)\n' "${#token}"
+  read -r -p '  Chat id: ' chat </dev/tty
+  chat="$(echo "${chat:-}" | tr -d '[:space:]')"
+  [ -n "$chat" ] || { warn "Cancelled. Nothing changed."; return 1; }
+
+  # Test BEFORE writing. Never persist a credential we have not proven works.
+  resp="$(curl -s --max-time 10 "https://api.telegram.org/bot${token}/sendMessage" \
+            -d chat_id="${chat}" -d text="Nexora alerts connected ✓")"
+  if ! printf '%s' "$resp" | grep -q '"ok":true'; then
+    bad "Telegram rejected that token/chat id. Nothing was saved."
+    printf '     %s\n' "$(printf '%s' "$resp" | head -c 200)"
+    return 1
+  fi
+  umask 077
+  { printf 'TG_TOKEN=%s\n' "$token"; printf 'TG_CHAT=%s\n' "$chat"; } > /root/.nexora_tg
+  chmod 600 /root/.nexora_tg
+  umask 022
+  ok "Telegram alerts on — check your phone"
+  systemctl restart "$UNIT" && ok "Executor restarted so alerts take effect"
+}
+
 cmd_uninstall() {
   flush_tty
   read -r -p "  Remove Nexora from this server? Type REMOVE to confirm: " CONF </dev/tty
@@ -202,6 +232,7 @@ case "${1:-help}" in
   update)    cmd_update ;;
   logs)      cmd_logs ;;
   support)   cmd_support ;;
+  telegram)  cmd_telegram ;;
   uninstall) cmd_uninstall ;;
   *) cat <<'EOM'
 
@@ -214,6 +245,7 @@ case "${1:-help}" in
     pause       stop trading (open positions keep their stop/target)
     resume      start trading again
     update      install the newest Nexora version
+    telegram    turn on trade alerts to your phone
     support     print a report to send to Nexora
     uninstall   remove Nexora from this server
 
